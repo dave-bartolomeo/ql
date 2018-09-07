@@ -8,7 +8,9 @@ import Cached
 cached private module Cached {
 
   private OldIR::OperandTag getOldOperandTag(OperandTag newTag) {
-    newTag instanceof LoadStoreAddressOperand and result instanceof OldIR::LoadStoreAddressOperand or
+    newTag instanceof AddressOperand and result instanceof OldIR::AddressOperand or
+    newTag instanceof BufferSizeOperand and result instanceof OldIR::BufferSizeOperand or
+    newTag instanceof SideEffectOperand and result instanceof OldIR::SideEffectOperand or
     newTag instanceof CopySourceOperand and result instanceof OldIR::CopySourceOperand or
     newTag instanceof UnaryOperand and result instanceof OldIR::UnaryOperand or
     newTag instanceof LeftOperand and result instanceof OldIR::LeftOperand or
@@ -239,6 +241,13 @@ cached private module Cached {
       oldInstr = getOldInstruction(instruction) and
       baseClass = oldInstr.getBaseClass() and
       derivedClass = oldInstr.getDerivedClass()
+    )
+  }
+
+  cached Instruction getPrimaryInstructionForSideEffect(Instruction instruction) {
+    exists(OldIR::SideEffectInstruction oldInstruction |
+      oldInstruction = getOldInstruction(instruction) and
+      result = getNewInstruction(oldInstruction.getPrimaryInstruction())
     )
   }
 
