@@ -670,7 +670,7 @@ class InitializeParameterInstruction extends VariableInstruction {
   }
 
   final Parameter getParameter() {
-    result = var.(IRUserVariable).getVariable()
+    result = var.(IRParameterVariable).getParameter()
   }
 
   override final MemoryAccessKind getResultMemoryAccess() {

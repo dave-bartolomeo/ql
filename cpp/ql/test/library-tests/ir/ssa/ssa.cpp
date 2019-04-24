@@ -175,3 +175,20 @@ void WrapperStruct(Wrapper w) {
   a = w.f;  // MustExactlyOverlap
   x = w;  // MustTotallyOverlap
 }
+
+void IndirectParams(int* pi, Point* ppt, Point* apt) {
+  int x = *pi;
+  *pi = 5;
+  int y = *pi;
+
+  x = ppt->x;
+  ppt->x = 2;
+  ppt->y = 4;
+  y = ppt->y;
+
+  int i = *pi;
+  Point& pt = apt[i];
+  pt.x = 3;
+  pt.y = 7;
+  x = pt.x + pt.y;
+}

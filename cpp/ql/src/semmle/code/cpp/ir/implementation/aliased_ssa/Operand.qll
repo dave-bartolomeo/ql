@@ -48,6 +48,15 @@ class Operand extends TOperand {
   }
 
   /**
+   * Gets the `Instruction` whose result is the value of the operand. Holds only if the definition exactly overlaps the
+   * use.
+   */
+  Instruction getExactDefinitionInstruction() {
+    result = getDefinitionInstruction() and
+    not isDefinitionInexact()
+  }
+
+  /**
    * Gets the overlap relationship between the operand's definition and its use.
    */
   Overlap getDefinitionOverlap() {

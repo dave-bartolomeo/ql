@@ -3,15 +3,50 @@ import AliasAnalysis
 import semmle.code.cpp.ir.internal.Overlap
 private import semmle.code.cpp.Print
 private import semmle.code.cpp.ir.implementation.unaliased_ssa.IR
+private import semmle.code.cpp.ir.implementation.unaliased_ssa.gvn.ValueNumbering
 private import semmle.code.cpp.ir.internal.IntegerConstant as Ints
 private import semmle.code.cpp.ir.internal.IntegerInterval as Interval
 private import semmle.code.cpp.ir.internal.OperandTag
 
 private class IntValue = Ints::IntValue;
 
-private predicate hasResultMemoryAccess(Instruction instr, IRVariable var, Type type, IntValue startBitOffset,
+private predicate isPointerOrReferenceType(Type type) {
+  type instanceof PointerType or
+  type instanceof ReferenceType
+}
+
+/**
+ * Represents a value that points to the start of a contiguous region of allocated memory, disjoint from
+ * any other such region. Potential regions include:
+ * - Variables: Each variable is disjoint from all other variables.
+ * - Memory pointed to by a parameter: Parameters are assumed to not alias one another, and to not point to global
+ *   variables. This is unsound, but is true often enough in practice that we should get better results by making this
+ *   assumption than by being conservative.
+ */
+class MemoryRegion extends ValueNumber {
+  MemoryRegion() {
+    this.getAnInstruction() instanceof VariableAddressInstruction or
+    isPointerOrReferenceType(this.getAnInstruction().(InitializeParameterInstruction).getParameter().getType())
+  }
+}
+
+MemoryRegion getOperandMemoryRegion(AddressOperand operand) {
+  exists(Instruction baseAddress |
+    operandPointsWithin(operand, baseAddress, _) and
+    result = valueNumber(baseAddress)
+  )
+}
+
+predicate operandBaseAndConstantOffset(AddressOperand operand, ValueNumber base, int bitOffset) {
+  exists(Instruction baseInstr |
+    operandBaseAddressAndConstantOffset(operand, baseInstr, bitOffset) and
+    base = valueNumber(baseInstr)
+  )
+}
+
+private predicate hasResultMemoryAccess(Instruction instr, MemoryRegion region, Type type, IntValue startBitOffset,
     IntValue endBitOffset) {
-  resultPointsTo(instr.getResultAddressOperand().getDefinitionInstruction(), var, startBitOffset) and
+  operandPointsToVariable(instr.getResultAddressOperand(), var, startBitOffset) and
   type = instr.getResultType() and
   if exists(instr.getResultSize()) then
     endBitOffset = Ints::add(startBitOffset, Ints::mul(instr.getResultSize(), 8))
@@ -21,7 +56,7 @@ private predicate hasResultMemoryAccess(Instruction instr, IRVariable var, Type 
 
 private predicate hasOperandMemoryAccess(MemoryOperand operand, IRVariable var, Type type, IntValue startBitOffset,
     IntValue endBitOffset) {
-  resultPointsTo(operand.getAddressOperand().getDefinitionInstruction(), var, startBitOffset) and
+  operandPointsToVariable(operand.getAddressOperand(), var, startBitOffset) and
   type = operand.getType() and
   if exists(operand.getSize()) then
     endBitOffset = Ints::add(startBitOffset, Ints::mul(operand.getSize(), 8))

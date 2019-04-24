@@ -106,14 +106,14 @@ IntValue getPointerBitOffset(PointerOffsetInstruction instr) {
 }
 
 /**
- * Holds if any address held in operand `tag` of instruction `instr` is
- * propagated to the result of `instr`, offset by the number of bits in
- * `bitOffset`. If the address is propagated, but the offset is not known to be
- * a constant, then `bitOffset` is unknown.
+ * Holds if any address held in `operand` is propagated to the result of the instruction,
+ * offset by the number of bits in `bitOffset`. If the address is propagated, but the offset is not
+ * known to be a constant, then `bitOffset` is unknown.
  */
 private predicate operandIsPropagated(Operand operand, IntValue bitOffset) {
   exists(Instruction instr |
     instr = operand.getUseInstruction() and
+    not operand.isDefinitionInexact() and
     (
       // Converting to a non-virtual base class adds the offset of the base class.
       exists(ConvertToBaseInstruction convert |
@@ -140,9 +140,12 @@ private predicate operandIsPropagated(Operand operand, IntValue bitOffset) {
         ) and
         bitOffset = 0
       ) or
-      // Adding an integer to or subtracting an integer from a pointer propagates
-      // the address with an offset.
-      bitOffset = getPointerBitOffset(instr.(PointerOffsetInstruction)) or
+      exists(PointerOffsetInstruction offsetInstr |
+        // Adding an integer to or subtracting an integer from a pointer propagates
+        // the address with an offset.
+        operand = offsetInstr.getLeftOperand() and
+        bitOffset = getPointerBitOffset(offsetInstr)
+      ) or
       // Computing a field address from a pointer propagates the address plus the
       // offset of the field.
       bitOffset = getFieldBitOffset(instr.(FieldAddressInstruction).getField()) or
@@ -151,6 +154,18 @@ private predicate operandIsPropagated(Operand operand, IntValue bitOffset) {
       // Some functions are known to propagate an argument
       isAlwaysReturnedArgument(operand) and bitOffset = 0
     )
+  )
+}
+
+/**
+ * Equivalent to `operandIsPropagated`, except that it also considers the operand to be propagated by
+ * a call to a function that always returns the argument given by the operand.
+ */
+private predicate operandIsPropagatedIncludingByCall(Operand operand, IntValue bitOffset) {
+  operandIsPropagated(operand, bitOffset) or
+  exists(CallInstruction ci, Instruction init |
+    isArgumentForParameter(ci, operand, init) and
+    resultReturned(init, bitOffset)
   )
 }
 
@@ -301,29 +316,83 @@ predicate variableAddressEscapes(IRVariable var) {
 }
 
 /**
- * Holds if the result of instruction `instr` points within variable `var`, at
- * bit offset `bitOffset` within the variable. If the result points within
- * `var`, but at an unknown or non-constant offset, then `bitOffset` is unknown.
+ * Holds if the value of the specified parameter escapes the domain of the analysis.
  */
-predicate resultPointsTo(Instruction instr, IRVariable var, IntValue bitOffset) {
-  (
-    // The address of a variable points to that variable, at offset 0.
-    instr.(VariableAddressInstruction).getVariable() = var and
-    bitOffset = 0
-  ) or
-  exists(Operand operand, IntValue originalBitOffset, IntValue propagatedBitOffset |
-    operand = instr.getAnOperand() and
-    // If an operand is propagated, then the result points to the same variable,
+predicate parameterValueEscapes(IRParameterVariable param) {
+  // The parameter's value escapes if the result of the `InitializeParameter` instruction that initializes the variable
+  // escapes.
+  exists(InitializeParameterInstruction instr |
+    instr.getVariable() = param and
+    resultEscapesNonReturn(instr)
+  )
+}
+
+/**
+ * Holds if the address computed by `instruction` consists of the address computed by `base`, plus a bit
+ * offset `bitOffset`. The offset need not be a constant. Does not hold if `base` itself consists of a base address
+ * plus an offset. Thus, this predicate computes the most distant base address.
+ */
+private predicate resultPointsWithin(Instruction instruction, Instruction base, IntValue bitOffset) {
+  exists(Operand operand, IntValue baseBitOffset, IntValue propagatedBitOffset |
+    operand = instruction.getAnOperand() and
+    // If an operand is propagated, then the result points to the same region,
     // offset by the bit offset from the propagation.
-    resultPointsTo(operand.getDefinitionInstruction(), var, originalBitOffset) and
-    (
-      operandIsPropagated(operand, propagatedBitOffset)
-      or
-      exists(CallInstruction ci, Instruction init |
-        isArgumentForParameter(ci, operand, init) and
-        resultReturned(init, propagatedBitOffset)
-      )
+    operandIsPropagatedIncludingByCall(operand, propagatedBitOffset) and
+    resultPointsWithin(operand.getDefinitionInstruction(), base, baseBitOffset) and
+    bitOffset = Ints::add(baseBitOffset, propagatedBitOffset)
+  ) or
+  (
+    not operandIsPropagatedIncludingByCall(instruction.getAnOperand(), _) and
+    base = instruction and
+    bitOffset = 0
+  )
+}
+
+/**
+ * Holds if the address used by `operand` consists of the address computed by `base`, plus a bit
+ * offset `bitOffset`. The offset need not be a constant. Does not hold if `base` itself consists of a base address
+ * plus an offset. Thus, this predicate computes the most distant base address.
+ */
+predicate operandPointsWithin(AddressOperand operand, Instruction base, IntValue bitOffset) {
+  resultPointsWithin(operand.getDefinitionInstruction(), base, bitOffset)
+}
+
+/**
+ * Holds if the address computed by `instruction` consists of the address computed by `base`, plus a
+ * constant bit offset `bitOffset`. Does not hold if `base` itself consists of a base address plus a constant
+ * offset. Thus, this predicate computes the most distant base address for which the offset is still a constant.
+ */
+private predicate resultBaseAddressAndConstantOffset(Instruction instruction, Instruction base, int bitOffset) {
+  exists(Operand operand, IntValue baseBitOffset, IntValue propagatedBitOffset |
+    operand = instruction.getAnOperand() and
+    operandIsPropagated(operand, propagatedBitOffset) and
+    Ints::hasValue(propagatedBitOffset) and
+    resultBaseAddressAndConstantOffset(operand.getExactDefinitionInstruction(), base, baseBitOffset) and
+    bitOffset = baseBitOffset + propagatedBitOffset
+  ) or
+  (
+    not exists(Operand operand, IntValue propagatedBitOffset |
+      operand = instruction.getAnOperand() and
+      operandIsPropagated(operand, propagatedBitOffset) and
+      Ints::hasValue(propagatedBitOffset)
     ) and
-    bitOffset = Ints::add(originalBitOffset, propagatedBitOffset)
+    base = instruction and
+    bitOffset = 0
+  )
+}
+
+/**
+ * Holds if the address used by `operand` consists of the address computed by `base`, plus a
+ * constant bit offset `bitOffset`. Does not hold if `base` itself consists of a base address plus a constant
+ * offset. Thus, this predicate computes the most distant base address for which the offset is still a constant.
+ */
+predicate operandBaseAddressAndConstantOffset(AddressOperand operand, Instruction base, int bitOffset) {
+  resultBaseAddressAndConstantOffset(operand.getDefinitionInstruction(), base, bitOffset)
+}
+
+predicate operandPointsToVariable(AddressOperand operand, IRVariable var, IntValue bitOffset) {
+  exists(VariableAddressInstruction instr |
+    operandPointsWithin(operand, instr, bitOffset) and
+    var = instr.getVariable()
   )
 }

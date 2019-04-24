@@ -112,6 +112,14 @@ class IRAutomaticUserVariable extends IRUserVariable, IRAutomaticVariable,
   }
 }
 
+class IRParameterVariable extends IRAutomaticUserVariable {
+  override Parameter localVar;
+
+  final Parameter getParameter() {
+    result = localVar
+  }
+}
+
 class IRStaticUserVariable extends IRUserVariable, TIRStaticUserVariable {
   IRStaticUserVariable() {
     this = TIRStaticUserVariable(var, func)
