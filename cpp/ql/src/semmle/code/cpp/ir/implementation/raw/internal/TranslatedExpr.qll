@@ -1,6 +1,6 @@
-import cpp
+private import cpp
 private import semmle.code.cpp.ir.implementation.Opcode
-private import semmle.code.cpp.ir.internal.OperandTag
+private import semmle.code.cpp.ir.implementation.internal.OperandTag
 private import semmle.code.cpp.ir.internal.TempVariableTag
 private import InstructionTag
 private import TranslatedCondition
@@ -727,7 +727,8 @@ class TranslatedTransparentUnaryOperation extends TranslatedTransparentExpr {
       expr instanceof PointerDereferenceExpr or
       // &x is the same as x. &x isn't loadable, but is included
       // here to avoid having two nearly identical classes.
-      expr instanceof AddressOfExpr
+      expr instanceof AddressOfExpr or
+      expr instanceof BuiltInOperationBuiltInAddressOf
     )
   }
 
@@ -2562,6 +2563,88 @@ class TranslatedNewArrayExpr extends TranslatedNewOrNewArrayExpr {
 }
 
 /**
+ * A placeholder for the translation of a `delete[]` expression.
+ *
+ * Proper translation is not yet implemented, but this stub implementation
+ * ensures that code following a `delete[]` is not unreachable.
+ */
+class TranslatedDeleteArrayExprPlaceHolder extends TranslatedSingleInstructionExpr {
+  override DeleteArrayExpr expr;
+
+  override final Instruction getFirstInstruction() {
+    result = getOperand().getFirstInstruction()
+  }
+
+  override final TranslatedElement getChild(int id) {
+    id = 0 and result = getOperand()
+  }
+
+  override final Instruction getInstructionSuccessor(InstructionTag tag,
+    EdgeKind kind) {
+    tag = OnlyInstructionTag() and
+    result = getParent().getChildSuccessor(this) and
+    kind instanceof GotoEdge
+  }
+
+  override final Instruction getChildSuccessor(TranslatedElement child) {
+    child = getOperand() and result = getInstruction(OnlyInstructionTag())
+  }
+
+  override final Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
+    none()
+  }
+
+  override final Opcode getOpcode() {
+    result instanceof Opcode::NoOp
+  }
+
+  private TranslatedExpr getOperand() {
+    result = getTranslatedExpr(expr.getExpr().getFullyConverted())
+  }
+}
+
+/**
+ * A placeholder for the translation of a `delete` expression.
+ *
+ * Proper translation is not yet implemented, but this stub implementation
+ * ensures that code following a `delete` is not unreachable.
+ */
+class TranslatedDeleteExprPlaceHolder extends TranslatedSingleInstructionExpr {
+  override DeleteExpr expr;
+
+  override final Instruction getFirstInstruction() {
+    result = getOperand().getFirstInstruction()
+  }
+
+  override final TranslatedElement getChild(int id) {
+    id = 0 and result = getOperand()
+  }
+
+  override final Instruction getInstructionSuccessor(InstructionTag tag,
+    EdgeKind kind) {
+    tag = OnlyInstructionTag() and
+    result = getParent().getChildSuccessor(this) and
+    kind instanceof GotoEdge
+  }
+
+  override final Instruction getChildSuccessor(TranslatedElement child) {
+    child = getOperand() and result = getInstruction(OnlyInstructionTag())
+  }
+
+  override final Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
+    none()
+  }
+
+  override final Opcode getOpcode() {
+    result instanceof Opcode::NoOp
+  }
+
+  private TranslatedExpr getOperand() {
+    result = getTranslatedExpr(expr.getExpr().getFullyConverted())
+  }
+}
+
+/**
  * The IR translation of a `ConditionDeclExpr`, which represents the value of the declared variable
  * after conversion to `bool` in code such as:
  * ```
@@ -2777,5 +2860,31 @@ class TranslatedStmtExpr extends TranslatedNonConstantExpr {
   
   TranslatedStmt getStmt() {
     result = getTranslatedStmt(expr.getStmt())
+  }
+}
+
+class TranslatedErrorExpr extends TranslatedSingleInstructionExpr {
+  override ErrorExpr expr;
+
+  override final Instruction getFirstInstruction() {
+    result = getInstruction(OnlyInstructionTag())
+  }
+
+  override final TranslatedElement getChild(int id) { none() }
+
+  override final Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
+    tag = OnlyInstructionTag() and
+    result = getParent().getChildSuccessor(this) and
+    kind instanceof GotoEdge
+  }
+
+  override final Instruction getChildSuccessor(TranslatedElement child) { none() }
+
+  override final Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
+    none()
+  }
+
+  override final Opcode getOpcode() {
+    result instanceof Opcode::Error
   }
 }

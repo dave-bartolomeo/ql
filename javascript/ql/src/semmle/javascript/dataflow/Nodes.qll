@@ -67,6 +67,19 @@ class InvokeNode extends DataFlow::SourceNode {
   /** Gets the data flow node corresponding to the last argument of this invocation. */
   DataFlow::Node getLastArgument() { result = getArgument(getNumArgument() - 1) }
 
+  /**
+   * Gets a data flow node corresponding to an array of values being passed as
+   * individual arguments to this invocation.
+   *
+   * Examples:
+   * ```
+   * x.push(...args);                     // 'args' is a spread argument
+   * x.push(x, ...args, y, ...more);      // 'args' and 'more' are a spread arguments
+   * Array.prototype.push.apply(x, args); // 'args' is a spread argument
+   * ```
+  .*/
+  DataFlow::Node getASpreadArgument() { result = impl.getASpreadArgument() }
+
   /** Gets the number of arguments of this invocation, if it can be determined. */
   int getNumArgument() { result = impl.getNumArgument() }
 
@@ -643,15 +656,22 @@ class ClassNode extends DataFlow::SourceNode {
   FunctionNode getAStaticMethod() { result = impl.getAStaticMethod() }
 
   /**
+   * Gets a dataflow node that refers to the superclass of this class.
+   */
+  DataFlow::Node getASuperClassNode() { result = impl.getASuperClassNode() }
+
+  /**
    * Gets a direct super class of this class.
    */
   ClassNode getADirectSuperClass() {
-    result.getConstructor().getAstNode() = impl
-          .getASuperClassNode()
-          .analyze()
-          .getAValue()
-          .(AbstractCallable)
-          .getFunction()
+    result.getAClassReference().flowsTo(getASuperClassNode())
+  }
+
+  /**
+   * Gets a direct subclass of this class.
+   */
+  final ClassNode getADirectSubClass() {
+    this = result.getADirectSuperClass()
   }
 
   /**
@@ -661,6 +681,72 @@ class ClassNode extends DataFlow::SourceNode {
     result = getConstructor().getReceiver()
     or
     result = getAnInstanceMember().getReceiver()
+  }
+
+  /**
+   * Gets the abstract value representing the class itself.
+   */
+  AbstractValue getAbstractClassValue() {
+    result = this.(AnalyzedNode).getAValue()
+  }
+
+  /**
+   * Gets the abstract value representing an instance of this class.
+   */
+  AbstractValue getAbstractInstanceValue() {
+    result = AbstractInstance::of(getAstNode())
+  }
+
+  /**
+   * Gets a dataflow node that refers to this class object.
+   */
+  private DataFlow::SourceNode getAClassReference(DataFlow::TypeTracker t) {
+    t.start() and
+    result.(AnalyzedNode).getAValue() = getAbstractClassValue()
+    or
+    exists(DataFlow::TypeTracker t2 |
+      result = getAClassReference(t2).track(t2, t)
+    )
+  }
+
+  /**
+   * Gets a dataflow node that refers to this class object.
+   */
+  DataFlow::SourceNode getAClassReference() {
+    result = getAClassReference(DataFlow::TypeTracker::end())
+  }
+
+  /**
+   * Gets a dataflow node that refers to an instance of this class.
+   */
+  private DataFlow::SourceNode getAnInstanceReference(DataFlow::TypeTracker t) {
+    result = getAClassReference(t.continue()).getAnInstantiation()
+    or
+    t.start() and
+    result.(AnalyzedNode).getAValue() = getAbstractInstanceValue()
+    or
+    t.start() and
+    result = getAReceiverNode()
+    or
+    result = getAnInstanceReferenceAux(t) and
+    // Avoid tracking into the receiver of other classes.
+    // Note that this also blocks flows into a property of the receiver,
+    // but the `localFieldStep` rule will often compensate for this.
+    not result = any(DataFlow::ClassNode cls).getAReceiverNode()
+  }
+
+  pragma[noinline]
+  private DataFlow::SourceNode getAnInstanceReferenceAux(DataFlow::TypeTracker t) {
+    exists(DataFlow::TypeTracker t2 |
+      result = getAnInstanceReference(t2).track(t2, t)
+    )
+  }
+
+  /**
+   * Gets a dataflow node that refers to an instance of this class.
+   */
+  DataFlow::SourceNode getAnInstanceReference() {
+    result = getAnInstanceReference(DataFlow::TypeTracker::end())
   }
 }
 
@@ -803,6 +889,9 @@ module ClassNode {
       kind = MemberKind::method() and
       result = getAPrototypeReference().getAPropertySource(name)
       or
+      kind = MemberKind::method() and
+      result = getConstructor().getReceiver().getAPropertySource(name)
+      or
       exists(PropertyAccessor accessor |
         accessor = getAnAccessor(kind) and
         accessor.getName() = name and
@@ -812,7 +901,10 @@ module ClassNode {
 
     override FunctionNode getAnInstanceMember(MemberKind kind) {
       kind = MemberKind::method() and
-      result = getAPrototypeReference().getAPropertyWrite().getRhs().getALocalSource()
+      result = getAPrototypeReference().getAPropertySource()
+      or
+      kind = MemberKind::method() and
+      result = getConstructor().getReceiver().getAPropertySource()
       or
       exists(PropertyAccessor accessor |
         accessor = getAnAccessor(kind) and
@@ -823,7 +915,7 @@ module ClassNode {
     override FunctionNode getStaticMethod(string name) { result = getAPropertySource(name) }
 
     override FunctionNode getAStaticMethod() {
-      result = getAPropertyWrite().getRhs().getALocalSource()
+      result = getAPropertySource()
     }
 
     /**

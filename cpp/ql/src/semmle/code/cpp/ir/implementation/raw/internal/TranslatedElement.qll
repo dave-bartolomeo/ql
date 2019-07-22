@@ -1,9 +1,8 @@
-import cpp
-import cpp
+private import cpp
 import semmle.code.cpp.ir.implementation.raw.IR
 private import semmle.code.cpp.ir.IRConfiguration
 private import semmle.code.cpp.ir.implementation.Opcode
-private import semmle.code.cpp.ir.internal.OperandTag
+private import semmle.code.cpp.ir.implementation.internal.OperandTag
 private import semmle.code.cpp.ir.internal.TempVariableTag
 private import InstructionTag
 private import TranslatedCondition
@@ -67,6 +66,12 @@ private predicate ignoreExprAndDescendants(Expr expr) {
   // Do not translate input/output variables in GNU asm statements
   getRealParent(expr) instanceof AsmStmt or
   ignoreExprAndDescendants(getRealParent(expr)) // recursive case
+  // We do not yet translate destructors properly, so for now we ignore any
+  // custom deallocator call, if present.
+  or
+  exists(DeleteExpr deleteExpr | deleteExpr.getAllocatorCall() = expr)
+  or
+  exists(DeleteArrayExpr deleteArrayExpr | deleteArrayExpr.getAllocatorCall() = expr)
 }
 
 /**
@@ -78,8 +83,21 @@ private predicate ignoreExprOnly(Expr expr) {
     // Ignore the allocator call, because we always synthesize it. Don't ignore
     // its arguments, though, because we use them as part of the synthesis.
     newExpr.getAllocatorCall() = expr
-  ) or
+  )
+  or
+  // The extractor deliberately emits an `ErrorExpr` as the first argument to
+  // the allocator call, if any, of a `NewOrNewArrayExpr`. That `ErrorExpr`
+  // should not be translated.
+  exists(NewOrNewArrayExpr new | expr = new.getAllocatorCall().getArgument(0))
+  or
   not translateFunction(expr.getEnclosingFunction())
+  or
+  // We do not yet translate destructors properly, so for now we ignore the
+  // destructor call. We do, however, translate the expression being
+  // destructed, and that expression can be a child of the destructor call.
+  exists(DeleteExpr deleteExpr | deleteExpr.getDestructorCall() = expr)
+  or
+  exists(DeleteArrayExpr deleteArrayExpr | deleteArrayExpr.getDestructorCall() = expr)
 }
 
 /**

@@ -1,7 +1,7 @@
 import SSAConstructionInternal
-import cpp
+private import cpp
 private import semmle.code.cpp.ir.implementation.Opcode
-private import semmle.code.cpp.ir.internal.OperandTag
+private import semmle.code.cpp.ir.implementation.internal.OperandTag
 private import semmle.code.cpp.ir.internal.Overlap
 private import NewIR
 
@@ -69,7 +69,7 @@ cached private module Cached {
       oldInstruction = getOldInstruction(instruction) and
       oldOperand = oldInstruction.getAnOperand() and
       tag = oldOperand.getOperandTag() and
-      result = getNewInstruction(oldOperand.getDefinitionInstruction())
+      result = getNewInstruction(oldOperand.getAnyDef())
     )
   }
 
@@ -101,7 +101,7 @@ cached private module Cached {
         exists(OldInstruction oldDefinition |
           instruction instanceof UnmodeledUseInstruction and
           tag instanceof UnmodeledUseOperandTag and
-          oldDefinition = oldOperand.getDefinitionInstruction() and
+          oldDefinition = oldOperand.getAnyDef() and
           not exists(Alias::getResultMemoryLocation(oldDefinition)) and
           result = getNewInstruction(oldDefinition) and
           overlap instanceof MustTotallyOverlap

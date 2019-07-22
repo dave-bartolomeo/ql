@@ -841,6 +841,12 @@ module DataFlow {
       /** Gets the data flow node corresponding to an argument of this invocation. */
       abstract DataFlow::Node getAnArgument();
 
+      /**
+       * Gets a data flow node corresponding to an array of values being passed as
+       * individual arguments to this invocation.
+       */
+      abstract DataFlow::Node getASpreadArgument();
+
       /** Gets the number of arguments of this invocation, if it can be determined. */
       abstract int getNumArgument();
     }
@@ -889,6 +895,12 @@ module DataFlow {
         )
       }
 
+      override DataFlow::Node getASpreadArgument() {
+        exists(SpreadElement arg | arg = astNode.getAnArgument() |
+          result = DataFlow::valueNode(arg.getOperand())
+        )
+      }
+
       override int getNumArgument() {
         not astNode.isSpreadArgument(_) and result = astNode.getNumArgument()
       }
@@ -929,7 +941,9 @@ module DataFlow {
 
       ReflectiveCallNodeDef() { this = TReflectiveCallNode(originalCall.asExpr(), kind) }
 
-      override string getCalleeName() { none() }
+      override string getCalleeName() {
+        result = originalCall.getReceiver().asExpr().(PropAccess).getPropertyName()
+      }
 
       override DataFlow::Node getCalleeNode() { result = originalCall.getReceiver() }
 
@@ -941,6 +955,14 @@ module DataFlow {
 
       override DataFlow::Node getAnArgument() {
         kind = "call" and result = originalCall.getAnArgument() and result != getReceiver()
+      }
+
+      override DataFlow::Node getASpreadArgument() {
+        kind = "apply" and
+        result = originalCall.getArgument(1)
+        or
+        kind = "call" and
+        result = originalCall.getASpreadArgument()
       }
 
       override int getNumArgument() {
@@ -1163,6 +1185,9 @@ module DataFlow {
       pred = TThisNode(thiz.getBindingContainer()) and
       succ = valueNode(thiz)
     )
+    or
+    // `f.call(...)` and `f.apply(...)` evaluate to the result of the reflective call they perform
+    pred = TReflectiveCallNode(succ.asExpr(), _)
   }
 
   /**
