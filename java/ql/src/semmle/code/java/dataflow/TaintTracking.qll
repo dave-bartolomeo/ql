@@ -15,6 +15,7 @@ private import semmle.code.java.frameworks.android.Intent
 private import semmle.code.java.frameworks.Guice
 private import semmle.code.java.frameworks.Protobuf
 private import semmle.code.java.Maps
+private import semmle.code.java.dataflow.internal.ContainerFlow
 
 module TaintTracking {
   /**
@@ -218,6 +219,8 @@ module TaintTracking {
       v.getAFirstUse() = sink
     )
     or
+    containerStep(src, sink)
+    or
     constructorStep(src, sink)
     or
     qualifierToMethodStep(src, sink)
@@ -353,10 +356,6 @@ module TaintTracking {
 
   /** Methods that passes tainted data from qualifier to argument. */
   private predicate taintPreservingQualifierToArgument(Method m, int arg) {
-    m instanceof CollectionMethod and
-    m.hasName("toArray") and
-    arg = 1
-    or
     m.getDeclaringType().hasQualifiedName("java.io", "ByteArrayOutputStream") and
     m.hasName("writeTo") and
     arg = 0
@@ -378,6 +377,7 @@ module TaintTracking {
   private predicate taintPreservingQualifierToMethod(Method m) {
     m.getDeclaringType() instanceof TypeString and
     (
+      m.getName() = "concat" or
       m.getName() = "endsWith" or
       m.getName() = "getBytes" or
       m.getName() = "split" or
@@ -426,50 +426,6 @@ module TaintTracking {
     m.hasName("getInputStream")
     or
     m instanceof IntentGetExtraMethod
-    or
-    m
-        .getDeclaringType()
-        .getSourceDeclaration()
-        .getASourceSupertype*()
-        .hasQualifiedName("java.util", "Map<>$Entry") and
-    m.hasName("getValue")
-    or
-    m
-        .getDeclaringType()
-        .getSourceDeclaration()
-        .getASourceSupertype*()
-        .hasQualifiedName("java.lang", "Iterable") and
-    m.hasName("iterator")
-    or
-    m
-        .getDeclaringType()
-        .getSourceDeclaration()
-        .getASourceSupertype*()
-        .hasQualifiedName("java.util", "Iterator") and
-    m.hasName("next")
-    or
-    m.getDeclaringType().getSourceDeclaration().hasQualifiedName("java.util", "Enumeration") and
-    m.hasName("nextElement")
-    or
-    m.(MapMethod).hasName("entrySet")
-    or
-    m.(MapMethod).hasName("get")
-    or
-    m.(MapMethod).hasName("remove")
-    or
-    m.(MapMethod).hasName("values")
-    or
-    m.(CollectionMethod).hasName("toArray")
-    or
-    m.(CollectionMethod).hasName("get")
-    or
-    m.(CollectionMethod).hasName("remove") and m.getParameterType(0).(PrimitiveType).hasName("int")
-    or
-    m.(CollectionMethod).hasName("subList")
-    or
-    m.(CollectionMethod).hasName("firstElement")
-    or
-    m.(CollectionMethod).hasName("lastElement")
     or
     m.getDeclaringType().hasQualifiedName("java.nio", "ByteBuffer") and
     m.hasName("get")
@@ -525,6 +481,10 @@ module TaintTracking {
       or
       method.getName().matches("to%String") and arg = 0
     )
+    or
+    method.getDeclaringType() instanceof TypeString and
+    method.getName() = "concat" and
+    arg = 0
     or
     (
       method.getDeclaringType().hasQualifiedName("java.lang", "StringBuilder") or
@@ -656,18 +616,6 @@ module TaintTracking {
     method.getDeclaringType().hasQualifiedName("java.io", "ByteArrayOutputStream") and
     method.hasName("write") and
     arg = 0
-    or
-    method.(MapMethod).hasName("put") and arg = 1
-    or
-    method.(MapMethod).hasName("putAll") and arg = 0
-    or
-    method.(CollectionMethod).hasName("add") and arg = method.getNumberOfParameters() - 1
-    or
-    method.(CollectionMethod).hasName("addAll") and arg = method.getNumberOfParameters() - 1
-    or
-    method.(CollectionMethod).hasName("addElement") and arg = 0
-    or
-    method.(CollectionMethod).hasName("set") and arg = 1
   }
 
   /** A comparison or equality test with a constant. */

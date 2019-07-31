@@ -4,8 +4,8 @@
  * parameters.
  */
 
-import javascript
-import semmle.javascript.dependencies.Dependencies
+private import javascript
+private import semmle.javascript.dependencies.Dependencies
 
 /** A data flow node corresponding to an expression. */
 class ExprNode extends DataFlow::ValueNode {
@@ -276,18 +276,6 @@ class ThisNode extends DataFlow::Node, DataFlow::SourceNode {
    * which is the nearest enclosing non-arrow function or top-level.
    */
   StmtContainer getBindingContainer() { DataFlow::thisNode(this, result) }
-
-  override string toString() { result = "this" }
-
-  override predicate hasLocationInfo(
-    string filepath, int startline, int startcolumn, int endline, int endcolumn
-  ) {
-    // Use the function entry as the location
-    getBindingContainer()
-        .getEntry()
-        .getLocation()
-        .hasLocationInfo(filepath, startline, startcolumn, endline, endcolumn)
-  }
 }
 
 /** A data flow node corresponding to a global variable access. */
@@ -315,6 +303,9 @@ DataFlow::SourceNode globalObjectRef() {
   or
   // Node.js
   result = globalVarRef("global")
+  or
+  // DOM and service workers
+  result = globalVarRef("self")
   or
   // `require("global")`
   result = moduleImport("global")
@@ -352,12 +343,12 @@ class FunctionNode extends DataFlow::ValueNode, DataFlow::SourceNode {
   int getNumParameter() { result = count(astNode.getAParameter()) }
 
   /** Gets the last parameter of this function. */
-  ParameterNode getLastParameter() { result = getParameter(getNumParameter()-1) }
+  ParameterNode getLastParameter() { result = getParameter(getNumParameter() - 1) }
 
   /** Holds if the last parameter of this function is a rest parameter. */
   predicate hasRestParameter() { astNode.hasRestParameter() }
 
-  /** Gets the name of this function, if it has one. */
+  /** Gets the unqualified name of this function, if it has one or one can be determined from the context. */
   string getName() { result = astNode.getName() }
 
   /** Gets a data flow node corresponding to a return value of this function. */
@@ -588,7 +579,7 @@ class ClassNode extends DataFlow::SourceNode {
   ClassNode() { this = impl }
 
   /**
-   * Gets the name of the class, if it has one.
+   * Gets the unqualified name of the class, if it has one or one can be determined from the context.
    */
   string getName() { result = impl.getName() }
 
@@ -663,16 +654,12 @@ class ClassNode extends DataFlow::SourceNode {
   /**
    * Gets a direct super class of this class.
    */
-  ClassNode getADirectSuperClass() {
-    result.getAClassReference().flowsTo(getASuperClassNode())
-  }
+  ClassNode getADirectSuperClass() { result.getAClassReference().flowsTo(getASuperClassNode()) }
 
   /**
    * Gets a direct subclass of this class.
    */
-  final ClassNode getADirectSubClass() {
-    this = result.getADirectSuperClass()
-  }
+  final ClassNode getADirectSubClass() { this = result.getADirectSuperClass() }
 
   /**
    * Gets the receiver of an instance member or constructor of this class.
@@ -686,16 +673,12 @@ class ClassNode extends DataFlow::SourceNode {
   /**
    * Gets the abstract value representing the class itself.
    */
-  AbstractValue getAbstractClassValue() {
-    result = this.(AnalyzedNode).getAValue()
-  }
+  AbstractValue getAbstractClassValue() { result = this.(AnalyzedNode).getAValue() }
 
   /**
    * Gets the abstract value representing an instance of this class.
    */
-  AbstractValue getAbstractInstanceValue() {
-    result = AbstractInstance::of(getAstNode())
-  }
+  AbstractValue getAbstractInstanceValue() { result = AbstractInstance::of(getAstNode()) }
 
   /**
    * Gets a dataflow node that refers to this class object.
@@ -704,9 +687,7 @@ class ClassNode extends DataFlow::SourceNode {
     t.start() and
     result.(AnalyzedNode).getAValue() = getAbstractClassValue()
     or
-    exists(DataFlow::TypeTracker t2 |
-      result = getAClassReference(t2).track(t2, t)
-    )
+    exists(DataFlow::TypeTracker t2 | result = getAClassReference(t2).track(t2, t))
   }
 
   /**
@@ -737,9 +718,7 @@ class ClassNode extends DataFlow::SourceNode {
 
   pragma[noinline]
   private DataFlow::SourceNode getAnInstanceReferenceAux(DataFlow::TypeTracker t) {
-    exists(DataFlow::TypeTracker t2 |
-      result = getAnInstanceReference(t2).track(t2, t)
-    )
+    exists(DataFlow::TypeTracker t2 | result = getAnInstanceReference(t2).track(t2, t))
   }
 
   /**
@@ -747,6 +726,18 @@ class ClassNode extends DataFlow::SourceNode {
    */
   DataFlow::SourceNode getAnInstanceReference() {
     result = getAnInstanceReference(DataFlow::TypeTracker::end())
+  }
+
+  /**
+   * Holds if this class is exposed in the global scope through the given qualified name.
+   */
+  pragma[noinline]
+  predicate hasQualifiedName(string name) {
+    exists(DataFlow::Node rhs |
+      getAClassReference().flowsTo(rhs) and
+      name = GlobalAccessPath::fromRhs(rhs) and
+      GlobalAccessPath::isAssignedInUniqueFile(name)
+    )
   }
 }
 
@@ -858,11 +849,12 @@ module ClassNode {
    */
   class FunctionStyleClass extends Range, DataFlow::ValueNode {
     override Function astNode;
+
     AbstractFunction function;
 
     FunctionStyleClass() {
       function.getFunction() = astNode and
-      exists (DataFlow::PropRef read |
+      exists(DataFlow::PropRef read |
         read.getPropertyName() = "prototype" and
         read.getBase().analyze().getAValue() = function
       )
@@ -914,15 +906,13 @@ module ClassNode {
 
     override FunctionNode getStaticMethod(string name) { result = getAPropertySource(name) }
 
-    override FunctionNode getAStaticMethod() {
-      result = getAPropertySource()
-    }
+    override FunctionNode getAStaticMethod() { result = getAPropertySource() }
 
     /**
      * Gets a reference to the prototype of this class.
      */
     DataFlow::SourceNode getAPrototypeReference() {
-      exists (DataFlow::SourceNode base | base.analyze().getAValue() = function |
+      exists(DataFlow::SourceNode base | base.analyze().getAValue() = function |
         result = base.getAPropertyRead("prototype")
         or
         result = base.getAPropertySource("prototype")

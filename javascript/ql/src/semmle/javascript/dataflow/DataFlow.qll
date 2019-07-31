@@ -161,6 +161,66 @@ module DataFlow {
 
     /** Gets a textual representation of this element. */
     string toString() { none() }
+
+    /**
+     * Gets the immediate predecessor of this node, if any.
+     *
+     * A node with an immediate predecessor can usually only have the value that flows
+     * into its from its immediate predecessor, currently with two exceptions:
+     *
+     * - An immediately-invoked function expression with a single return expression `e`
+     *   has `e` as its immediate predecessor, even if the function can fall over the
+     *   end and return `undefined`.
+     *
+     * - A destructuring property pattern or element pattern with a default value has
+     *   both the `PropRead` and its default value as immediate predecessors.
+     */
+    cached
+    DataFlow::Node getImmediatePredecessor() {
+      // Use of variable -> definition of variable
+      exists(SsaVariable var |
+        this = DataFlow::valueNode(var.getAUse()) and
+        result.(DataFlow::SsaDefinitionNode).getSsaVariable() = var
+      )
+      or
+      // Refinement of variable -> original definition of variable
+      exists(SsaRefinementNode refinement |
+        this.(DataFlow::SsaDefinitionNode).getSsaVariable() = refinement.getVariable() and
+        result.(DataFlow::SsaDefinitionNode).getSsaVariable() = refinement.getAnInput()
+      )
+      or
+      // Definition of variable -> RHS of definition
+      exists(SsaExplicitDefinition def |
+        this = TSsaDefNode(def) and
+        result = def.getRhsNode()
+      )
+      or
+      // IIFE call -> return value of IIFE
+      // Note: not sound in case function falls over end and returns 'undefined'
+      exists(Function fun |
+        localCall(this.asExpr(), fun) and
+        result = fun.getAReturnedExpr().flow() and
+        strictcount(fun.getAReturnedExpr()) = 1
+      )
+      or
+      // IIFE parameter -> IIFE call
+      exists(Parameter param |
+        this = DataFlow::parameterNode(param) and
+        localArgumentPassing(result.asExpr(), param)
+      )
+      or
+      // `{ x } -> e` in `let { x } = e`
+      exists(DestructuringPattern pattern |
+        this = TDestructuringPatternNode(pattern)
+      |
+        exists(VarDef def |
+          pattern = def.getTarget() and
+          result = DataFlow::valueNode(def.getDestructuringSource())
+        )
+        or
+        result = patternPropRead(pattern)
+      )
+    }
   }
 
   /**
@@ -788,6 +848,10 @@ module DataFlow {
       function.getLocation().hasLocationInfo(filepath, startline, startcolumn, endline, endcolumn)
     }
 
+    override BasicBlock getBasicBlock() {
+      result = function.(ExprOrStmt).getBasicBlock()
+    }
+
     /**
      * Gets the function corresponding to this exceptional return node.
      */
@@ -808,6 +872,10 @@ module DataFlow {
       string filepath, int startline, int startcolumn, int endline, int endcolumn
     ) {
       invoke.getLocation().hasLocationInfo(filepath, startline, startcolumn, endline, endcolumn)
+    }
+
+    override BasicBlock getBasicBlock() {
+      result = invoke.getBasicBlock()
     }
 
     /**
@@ -992,6 +1060,30 @@ module DataFlow {
   }
 
   /**
+   * A data flow node representing `this` in a function or top-level.
+   */
+  private class ThisNodeInternal extends Node, TThisNode {
+    override string toString() { result = "this" }
+
+    override BasicBlock getBasicBlock() {
+      exists(StmtContainer container | this = TThisNode(container) |
+        result = container.getEntry()
+      )
+    }
+
+    override predicate hasLocationInfo(
+      string filepath, int startline, int startcolumn, int endline, int endcolumn
+    ) {
+      // Use the function entry as the location
+      exists(StmtContainer container | this = TThisNode(container) |
+        container.getEntry()
+            .getLocation()
+            .hasLocationInfo(filepath, startline, startcolumn, endline, endcolumn)
+      )
+    }
+  }
+
+  /**
    * Gets the data flow node corresponding to `nd`.
    *
    * This predicate is only defined for expressions, properties, and for statements that declare
@@ -1055,6 +1147,27 @@ module DataFlow {
    */
   predicate exceptionalFunctionReturnNode(DataFlow::Node nd, Function function) {
     nd = TExceptionalFunctionReturnNode(function)
+  }
+
+  /**
+   * INTERNAL. DO NOT USE.
+   *
+   * Gets the `PropRead` node corresponding to the value stored in the given
+   * binding pattern due to destructuring.
+   *
+   * For example, in `let { p: value } = f()`, the `value` pattern maps to a `PropRead`
+   * extracting the `p` property.
+   */
+  private DataFlow::PropRead patternPropRead(BindingPattern value) {
+    exists(PropertyPattern prop |
+      value = prop.getValuePattern() and
+      result = TPropNode(prop)
+    )
+    or
+    exists(ArrayPattern array |
+      value = array.getAnElement() and
+      result = TElementPatternNode(array, value)
+    )
   }
 
   /**
@@ -1211,10 +1324,12 @@ module DataFlow {
   }
 
   /**
+   * INTERNAL. DO NOT USE.
+   *
    * Gets the data flow node representing the source of the definition of `v` at `def`,
    * if any.
    */
-  private Node defSourceNode(VarDef def, SsaSourceVariable v) {
+  Node defSourceNode(VarDef def, SsaSourceVariable v) {
     exists(BindingPattern lhs, VarRef r |
       lhs = def.getTarget() and r = lhs.getABindingVarRef() and r.getVariable() = v
     |

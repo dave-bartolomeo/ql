@@ -6,9 +6,21 @@ import javascript
 
 /**
  * A JSON-encoded value, which may be a primitive value, an array or an object.
+ *
+ * Examples:
+ *
+ * ```
+ * null
+ * true
+ * false
+ * 42
+ * "a string"
+ * [ 1, 2, 3 ]
+ * { "value": 0 }
+ * ```
  */
 class JSONValue extends @json_value, Locatable {
-  override Location getLocation() { hasLocation(this, result) }
+  override Location getLocation() { json_locations(this, result) }
 
   /** Gets the parent value to which this value belongs, if any. */
   JSONValue getParent() { json(this, _, result, _, _) }
@@ -24,6 +36,16 @@ class JSONValue extends @json_value, Locatable {
 
 /**
  * A JSON-encoded primitive value.
+ *
+ * Examples:
+ *
+ * ```
+ * null
+ * true
+ * false
+ * 42
+ * "a string"
+ * ```
  */
 abstract class JSONPrimitiveValue extends JSONValue {
   /** Gets a string representation of the encoded value. */
@@ -35,26 +57,58 @@ abstract class JSONPrimitiveValue extends JSONValue {
 
 /**
  * A JSON-encoded null value.
+ *
+ * Example:
+ *
+ * ```
+ * null
+ * ```
  */
 class JSONNull extends @json_null, JSONPrimitiveValue { }
 
 /**
  * A JSON-encoded Boolean value.
+ *
+ * Examples:
+ *
+ * ```
+ * true
+ * false
+ * ```
  */
 class JSONBoolean extends @json_boolean, JSONPrimitiveValue { }
 
 /**
  * A JSON-encoded number.
+ *
+ * Examples:
+ *
+ * ```
+ * 42
+ * 1.0
+ * ```
  */
 class JSONNumber extends @json_number, JSONPrimitiveValue { }
 
 /**
  * A JSON-encoded string value.
+ *
+ * Example:
+ *
+ * ```
+ * "a string"
+ * ```
  */
 class JSONString extends @json_string, JSONPrimitiveValue { }
 
 /**
  * A JSON-encoded array.
+ *
+ * Example:
+ *
+ * ```
+ * [ 1, 2, 3 ]
+ * ```
  */
 class JSONArray extends @json_array, JSONValue {
   /** Gets the value of the `i`th element of this array. */
@@ -66,6 +120,12 @@ class JSONArray extends @json_array, JSONValue {
 
 /**
  * A JSON-encoded object.
+ *
+ * Example:
+ *
+ * ```
+ * { "value": 0 }
+ * ```
  */
 class JSONObject extends @json_object, JSONValue {
   /** Gets the value of property `name` of this object. */
@@ -79,5 +139,7 @@ class JSONObject extends @json_object, JSONValue {
  * An error reported by the JSON parser.
  */
 class JSONParseError extends @json_parse_error, Error {
+  override Location getLocation() { json_locations(this, result) }
+
   override string getMessage() { json_errors(this, result) }
 }

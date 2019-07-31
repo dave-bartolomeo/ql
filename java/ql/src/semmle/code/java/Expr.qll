@@ -799,16 +799,6 @@ class LogicExpr extends Expr {
  */
 abstract class ComparisonExpr extends BinaryExpr {
   /**
-   * DEPRECATED: use `getLesserOperand()` instead.
-   */
-  deprecated Expr getLesser() { result = getLesserOperand() }
-
-  /**
-   * DEPRECATED: use `getGreaterOperand()` instead.
-   */
-  deprecated Expr getGreater() { result = getGreaterOperand() }
-
-  /**
    * Gets the lesser operand of this comparison expression.
    *
    * For example, `x` is the lesser operand
@@ -1131,6 +1121,9 @@ class SwitchExpr extends Expr, @switchexpr {
       break.(JumpStmt).getTarget() = this and result = break.getValue()
     )
   }
+
+  /** Gets a printable representation of this expression. */
+  override string toString() { result = "switch (...)" }
 }
 
 /** A parenthesised expression. */

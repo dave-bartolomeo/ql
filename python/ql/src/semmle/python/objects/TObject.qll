@@ -194,6 +194,14 @@ cached newtype TObject =
         PointsToInternal::pointsTo(call.getArg(0), ctx, getter, _)
     }
     or
+    /* Represents the `setter` or `deleter` method of a property object. */
+    TPropertySetterOrDeleter(PropertyInternal property, string method) {
+        exists(AttrNode attr |
+            PointsToInternal::pointsTo(attr.getObject(method), _, property, _)
+        ) and
+        ( method = "setter" or method = "deleter" )
+    }
+    or
     /* Represents a dynamically created class */
     TDynamicClass(CallNode instantiation, ClassObjectInternal metacls, PointsToContext context) {
         PointsToInternal::pointsTo(instantiation.getFunction(), context, metacls, _) and
@@ -253,6 +261,12 @@ predicate literal_instantiation(ControlFlowNode n, ClassObjectInternal cls, Poin
         n instanceof SetNode and cls = ObjectInternal::builtin("set")
         or
         n.getNode() instanceof ImaginaryLiteral and cls = ObjectInternal::builtin("complex")
+        or
+        n.getNode() instanceof ListComp and cls = ObjectInternal::builtin("list")
+        or
+        n.getNode() instanceof SetComp and cls = ObjectInternal::builtin("set")
+        or
+        n.getNode() instanceof DictComp and cls = ObjectInternal::builtin("dict")
     )
 }
 
