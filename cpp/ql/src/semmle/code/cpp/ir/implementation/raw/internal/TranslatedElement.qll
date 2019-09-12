@@ -3,17 +3,13 @@ import semmle.code.cpp.ir.implementation.raw.IR
 private import semmle.code.cpp.ir.IRConfiguration
 private import semmle.code.cpp.ir.implementation.Opcode
 private import semmle.code.cpp.ir.implementation.internal.OperandTag
+private import semmle.code.cpp.ir.internal.IRType
 private import semmle.code.cpp.ir.internal.TempVariableTag
 private import InstructionTag
 private import TranslatedCondition
 private import TranslatedFunction
 private import TranslatedStmt
 private import IRConstruction
-
-/**
- * Gets the built-in `int` type.
- */
-Type getIntType() { result.(IntType).isImplicitlySigned() }
 
 /**
  * Gets the "real" parent of `expr`. This predicate treats conversions as if
@@ -65,8 +61,8 @@ private predicate ignoreExprAndDescendants(Expr expr) {
   )
   or
   // Do not translate input/output variables in GNU asm statements
-  getRealParent(expr) instanceof AsmStmt
-  or
+//  getRealParent(expr) instanceof AsmStmt
+//  or
   ignoreExprAndDescendants(getRealParent(expr)) // recursive case
   or
   // We do not yet translate destructors properly, so for now we ignore any
@@ -495,7 +491,7 @@ abstract class TranslatedElement extends TTranslatedElement {
    * `VoidType`.
    */
   abstract predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
+    Opcode opcode, InstructionTag tag, IRType resultType
   );
 
   /**
@@ -575,6 +571,8 @@ abstract class TranslatedElement extends TTranslatedElement {
    */
   int getInstructionResultSize(InstructionTag tag) { none() }
 
+  predicate needsUnknownBlobType(int byteSize) { none() }
+  
   /**
    * If the instruction specified by `tag` is a `StringConstantInstruction`,
    * gets the `StringLiteral` for that instruction.

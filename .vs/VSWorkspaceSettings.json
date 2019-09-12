@@ -1,0 +1,10 @@
+{
+  "ql.projects": {
+    ".": {
+      "dbScheme": "cpp/ql/src/semmlecode.cpp.dbscheme",
+      "libraryPath": [
+        "cpp/ql/src"
+      ]
+    }
+  }
+}

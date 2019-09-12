@@ -1,6 +1,7 @@
 private import cpp
 import semmle.code.cpp.ir.implementation.raw.IR
 private import semmle.code.cpp.ir.implementation.internal.OperandTag
+private import semmle.code.cpp.ir.internal.IRType
 private import semmle.code.cpp.ir.internal.TempVariableTag
 private import InstructionTag
 private import TranslatedCondition
@@ -25,7 +26,7 @@ private module Cached {
   cached
   newtype TInstruction =
     MkInstruction(TranslatedElement element, InstructionTag tag) {
-      element.hasInstruction(_, tag, _, _)
+      element.hasInstruction(_, tag, _)
     }
 
   cached
@@ -217,15 +218,15 @@ private module Cached {
   }
 
   cached
-  predicate instructionHasType(Instruction instruction, Type type, boolean isGLValue) {
+  IRType getInstructionResultType(Instruction instruction) {
     getInstructionTranslatedElement(instruction)
-        .hasInstruction(_, getInstructionTag(instruction), type, isGLValue)
+        .hasInstruction(_, getInstructionTag(instruction), result)
   }
 
   cached
   Opcode getInstructionOpcode(Instruction instruction) {
     getInstructionTranslatedElement(instruction)
-        .hasInstruction(result, getInstructionTag(instruction), _, _)
+        .hasInstruction(result, getInstructionTag(instruction), _)
   }
 
   cached
@@ -297,6 +298,16 @@ private module Cached {
       instructionOrigin(instruction, element, tag) and
       result = element.getInstructionElementSize(tag)
     )
+  }
+
+  cached
+  predicate needsUnknownBlobType(int byteSize) {
+    /*
+    exists(TranslatedElement element |
+      element.needsUnknownBlobType(byteSize)
+    )
+    */
+    byteSize in [1..4000] or byteSize = 1073741824
   }
 
   cached

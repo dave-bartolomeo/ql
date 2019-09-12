@@ -245,31 +245,34 @@ cached private module Cached {
     instruction = Unreached(result)
   }
 
-  cached predicate instructionHasType(Instruction instruction, Type type, boolean isGLValue) {
+  private Language::IRType getMemoryLocationIRType(Alias::MemoryLocation location) {
+    exists(Type type |
+      type = location.getType() and
+      if type instanceof UnknownType
+      then result = Language::getUnknownType()
+      else result = Language::getIRTypeForPRValue(type)
+    )
+  }
+
+  cached Language::IRType getInstructionResultType(Instruction instruction) {
     exists(OldInstruction oldInstruction |
       instruction = WrappedInstruction(oldInstruction) and
-      type = oldInstruction.getResultType() and
-      if oldInstruction.isGLValue()
-      then isGLValue = true
-      else isGLValue = false
+      result = oldInstruction.getResultIRType()
     )
     or
     exists(OldInstruction oldInstruction, Alias::VirtualVariable vvar |
       instruction = Chi(oldInstruction) and
       hasChiNode(vvar, oldInstruction) and
-      type = vvar.getType() and
-      isGLValue = false
+      result = getMemoryLocationIRType(vvar)
     )
     or
     exists(Alias::MemoryLocation location |
       instruction = Phi(_, location) and
-      type = location.getType() and
-      isGLValue = false
+      result = getMemoryLocationIRType(location)
     )
     or
     instruction = Unreached(_) and
-    type instanceof VoidType and
-    isGLValue = false
+    result = Language::getVoidType()
   }
 
   cached Opcode getInstructionOpcode(Instruction instruction) {
@@ -335,12 +338,6 @@ cached private module Cached {
 
   cached int getInstructionElementSize(Instruction instruction) {
     result = getOldInstruction(instruction).(OldIR::PointerArithmeticInstruction).getElementSize()
-  }
-
-  cached int getInstructionResultSize(Instruction instruction) {
-    // Only return a result for instructions that needed an explicit result size.
-    instruction.getResultType() instanceof UnknownType and
-    result = getOldInstruction(instruction).getResultSize()
   }
 
   cached predicate getInstructionInheritance(Instruction instruction, Class baseClass,

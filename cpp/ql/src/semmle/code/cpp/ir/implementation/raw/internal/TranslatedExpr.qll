@@ -1,6 +1,7 @@
 private import cpp
 private import semmle.code.cpp.ir.implementation.Opcode
 private import semmle.code.cpp.ir.implementation.internal.OperandTag
+private import semmle.code.cpp.ir.internal.IRType
 private import semmle.code.cpp.ir.internal.TempVariableTag
 private import InstructionTag
 private import TranslatedCondition
@@ -51,10 +52,23 @@ abstract class TranslatedExpr extends TranslatedElement {
    */
   abstract predicate producesExprResult();
 
+  final IRType getResultIRType() {
+    if isResultGLValue() then
+      result = getIRTypeForGLValue(expr.getType())
+    else
+      result = getIRTypeForPRValue(expr.getType())
+  }
+
   /**
-   * Gets the type of the result produced by this expression.
+   * Holds if the result of this `TranslatedExpr` is a glvalue.
    */
-  final Type getResultType() { result = expr.getUnspecifiedType() }
+  private predicate isResultGLValue() {
+    expr.isGLValueCategory()
+    or
+    // If this TranslatedExpr doesn't produce the result, then it must represent
+    // a glvalue that is then loaded by a TranslatedLoad.
+    not producesExprResult()
+  }
 
   final override Locatable getAST() { result = expr }
 
@@ -91,25 +105,6 @@ abstract class TranslatedCoreExpr extends TranslatedExpr {
     // is the only TranslatedExpr.
     ignoreLoad(expr)
   }
-
-  /**
-   * Returns `true` if the result of this `TranslatedExpr` is a glvalue, or
-   * `false` if the result is a prvalue.
-   *
-   * This predicate returns a `boolean` value instead of just a being a plain
-   * predicate because all of the subclass predicates that call it require a
-   * `boolean` value.
-   */
-  final boolean isResultGLValue() {
-    if
-      expr.isGLValueCategory()
-      or
-      // If this TranslatedExpr doesn't produce the result, then it must represent
-      // a glvalue that is then loaded by a TranslatedLoad.
-      not producesExprResult()
-    then result = true
-    else result = false
-  }
 }
 
 class TranslatedConditionValue extends TranslatedCoreExpr, ConditionContext,
@@ -120,38 +115,32 @@ class TranslatedConditionValue extends TranslatedCoreExpr, ConditionContext,
 
   override Instruction getFirstInstruction() { result = getCondition().getFirstInstruction() }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     (
       tag = ConditionValueTrueTempAddressTag() or
       tag = ConditionValueFalseTempAddressTag() or
       tag = ConditionValueResultTempAddressTag()
     ) and
     opcode instanceof Opcode::VariableAddress and
-    resultType = getResultType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getType())
     or
     (
       tag = ConditionValueTrueConstantTag() or
       tag = ConditionValueFalseConstantTag()
     ) and
     opcode instanceof Opcode::Constant and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
     or
     (
       tag = ConditionValueTrueStoreTag() or
       tag = ConditionValueFalseStoreTag()
     ) and
     opcode instanceof Opcode::Store and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
     or
     tag = ConditionValueResultLoadTag() and
     opcode instanceof Opcode::Load and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
   }
 
   override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -214,7 +203,7 @@ class TranslatedConditionValue extends TranslatedCoreExpr, ConditionContext,
 
   override predicate hasTempVariable(TempVariableTag tag, Type type) {
     tag = ConditionValueTempVar() and
-    type = getResultType()
+    type = expr.getType()
   }
 
   override IRVariable getInstructionVariable(InstructionTag tag) {
@@ -262,13 +251,10 @@ class TranslatedLoad extends TranslatedExpr, TTranslatedLoad {
 
   override TranslatedElement getChild(int id) { id = 0 and result = getOperand() }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = LoadTag() and
     opcode instanceof Opcode::Load and
-    resultType = expr.getUnspecifiedType() and
-    if expr.isGLValueCategory() then isGLValue = true else isGLValue = false
+    resultType = getIRTypeForExpr(expr)
   }
 
   override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -324,9 +310,7 @@ class TranslatedCommaExpr extends TranslatedNonConstantExpr {
     child = getRightOperand() and result = getParent().getChildSuccessor(this)
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     none()
   }
 
@@ -341,6 +325,10 @@ class TranslatedCommaExpr extends TranslatedNonConstantExpr {
   }
 }
 
+private int getElementSize(Type type) {
+  result = max(type.getUnspecifiedType().(PointerType).getBaseType().getSize())
+}
+
 abstract class TranslatedCrementOperation extends TranslatedNonConstantExpr {
   override CrementOperation expr;
 
@@ -349,9 +337,9 @@ abstract class TranslatedCrementOperation extends TranslatedNonConstantExpr {
   final override string getInstructionConstantValue(InstructionTag tag) {
     tag = CrementConstantTag() and
     exists(Type resultType |
-      resultType = getResultType() and
+      resultType =  expr.getUnspecifiedType() and
       (
-        resultType instanceof IntegralType and result = "1"
+        resultType instanceof IntegralOrEnumType and result = "1"
         or
         resultType instanceof FloatingPointType and result = "1.0"
         or
@@ -360,38 +348,35 @@ abstract class TranslatedCrementOperation extends TranslatedNonConstantExpr {
     )
   }
 
-  private Type getConstantType() {
+  private IRType getConstantType() {
     exists(Type resultType |
-      resultType = getResultType() and
+      resultType = expr.getUnspecifiedType() and
       (
-        resultType instanceof ArithmeticType and result = resultType
-        or
+        (
+        resultType instanceof ArithmeticType and
+        result = getIRTypeForPRValue(expr.getType())
+        ) or
         resultType instanceof PointerType and result = getIntType()
       )
     )
   }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
-    isGLValue = false and
-    (
-      tag = CrementLoadTag() and
-      opcode instanceof Opcode::Load and
-      resultType = getResultType()
-      or
-      tag = CrementConstantTag() and
-      opcode instanceof Opcode::Constant and
-      resultType = getConstantType()
-      or
-      tag = CrementOpTag() and
-      opcode = getOpcode() and
-      resultType = getResultType()
-      or
-      tag = CrementStoreTag() and
-      opcode instanceof Opcode::Store and
-      resultType = getResultType()
-    )
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
+    tag = CrementLoadTag() and
+    opcode instanceof Opcode::Load and
+    resultType = getIRTypeForPRValue(expr.getType())
+    or
+    tag = CrementConstantTag() and
+    opcode instanceof Opcode::Constant and
+    resultType = getConstantType()
+    or
+    tag = CrementOpTag() and
+    opcode = getOpcode() and
+    resultType = getIRTypeForPRValue(expr.getType())
+    or
+    tag = CrementStoreTag() and
+    opcode instanceof Opcode::Store and
+    resultType = getIRTypeForPRValue(expr.getType())
   }
 
   final override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -452,7 +437,7 @@ abstract class TranslatedCrementOperation extends TranslatedNonConstantExpr {
       getOpcode() instanceof Opcode::PointerAdd or
       getOpcode() instanceof Opcode::PointerSub
     ) and
-    result = max(getResultType().(PointerType).getBaseType().getSize())
+    result = getElementSize(expr.getType())
   }
 
   final TranslatedExpr getOperand() {
@@ -461,7 +446,7 @@ abstract class TranslatedCrementOperation extends TranslatedNonConstantExpr {
 
   final Opcode getOpcode() {
     exists(Type resultType |
-      resultType = getResultType() and
+      resultType = expr.getUnspecifiedType() and
       (
         (
           expr instanceof IncrementOperation and
@@ -542,13 +527,10 @@ class TranslatedArrayExpr extends TranslatedNonConstantExpr {
 
   override Instruction getResult() { result = getInstruction(OnlyInstructionTag()) }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::PointerAdd and
-    resultType = getResultType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getType())
   }
 
   override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -564,7 +546,7 @@ class TranslatedArrayExpr extends TranslatedNonConstantExpr {
 
   override int getInstructionElementSize(InstructionTag tag) {
     tag = OnlyInstructionTag() and
-    result = max(getResultType().getSize())
+    result = max(expr.getUnspecifiedType().getSize())
   }
 
   private TranslatedExpr getBaseOperand() {
@@ -587,9 +569,7 @@ abstract class TranslatedTransparentExpr extends TranslatedNonConstantExpr {
     child = getOperand() and result = getParent().getChildSuccessor(this)
   }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     none()
   }
 
@@ -632,7 +612,9 @@ class TranslatedTransparentConversion extends TranslatedTransparentExpr {
     )
   }
 
-  override TranslatedExpr getOperand() { result = getTranslatedExpr(expr.getExpr()) }
+  override TranslatedExpr getOperand() {
+    result = getTranslatedExpr(expr.getExpr())
+  }
 }
 
 class TranslatedThisExpr extends TranslatedNonConstantExpr {
@@ -640,13 +622,10 @@ class TranslatedThisExpr extends TranslatedNonConstantExpr {
 
   final override TranslatedElement getChild(int id) { none() }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::CopyValue and
-    resultType = expr.getUnspecifiedType() and
-    isGLValue = false
+    resultType = getResultIRType()
   }
 
   final override Instruction getResult() { result = getInstruction(OnlyInstructionTag()) }
@@ -707,13 +686,10 @@ class TranslatedNonFieldVariableAccess extends TranslatedVariableAccess {
 
   override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) { none() }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::VariableAddress and
-    resultType = getResultType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getType())
   }
 
   override IRVariable getInstructionVariable(InstructionTag tag) {
@@ -733,13 +709,10 @@ class TranslatedFieldAccess extends TranslatedVariableAccess {
     result = getQualifier().getResult()
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::FieldAddress and
-    resultType = getResultType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getType())
   }
 
   override Field getInstructionField(InstructionTag tag) {
@@ -763,13 +736,10 @@ class TranslatedFunctionAccess extends TranslatedNonConstantExpr {
     kind instanceof GotoEdge
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::FunctionAddress and
-    resultType = expr.getUnspecifiedType() and
-    isGLValue = true
+    resultType = getResultIRType()
   }
 
   override Function getInstructionFunction(InstructionTag tag) {
@@ -811,15 +781,10 @@ abstract class TranslatedConstantExpr extends TranslatedCoreExpr, TTranslatedVal
     none()
   }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode = getOpcode() and
-    resultType = getResultType() and
-    if expr.isGLValueCategory() or expr.hasLValueToRValueConversion()
-    then isGLValue = true
-    else isGLValue = false
+    resultType = getResultIRType()
   }
 
   final override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -865,13 +830,10 @@ abstract class TranslatedSingleInstructionExpr extends TranslatedNonConstantExpr
    */
   abstract Opcode getOpcode();
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     opcode = getOpcode() and
     tag = OnlyInstructionTag() and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
   }
 
   final override Instruction getResult() { result = getInstruction(OnlyInstructionTag()) }
@@ -945,13 +907,10 @@ abstract class TranslatedSingleInstructionConversion extends TranslatedConversio
     child = getOperand() and result = getInstruction(OnlyInstructionTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode = getOpcode() and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
   }
 
   override Instruction getResult() { result = getInstruction(OnlyInstructionTag()) }
@@ -996,7 +955,7 @@ class TranslatedDynamicCast extends TranslatedSingleInstructionConversion {
 
   override Opcode getOpcode() {
     exists(Type resultType |
-      resultType = getResultType() and
+      resultType = expr.getUnspecifiedType() and
       if resultType instanceof PointerType
       then
         if resultType.(PointerType).getBaseType() instanceof VoidType
@@ -1054,19 +1013,14 @@ class TranslatedBoolConversion extends TranslatedConversion {
     child = getOperand() and result = getInstruction(BoolConversionConstantTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
-    isGLValue = false and
-    (
-      tag = BoolConversionConstantTag() and
-      opcode instanceof Opcode::Constant and
-      resultType = getOperand().getResultType()
-      or
-      tag = BoolConversionCompareTag() and
-      opcode instanceof Opcode::CompareNE and
-      resultType instanceof BoolType
-    )
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
+    tag = BoolConversionConstantTag() and
+    opcode instanceof Opcode::Constant and
+    resultType = getOperand().getResultIRType()
+    or
+    tag = BoolConversionCompareTag() and
+    opcode instanceof Opcode::CompareNE and
+    resultType = getBoolType()
   }
 
   override Instruction getResult() { result = getInstruction(BoolConversionCompareTag()) }
@@ -1197,7 +1151,7 @@ class TranslatedBinaryOperation extends TranslatedSingleInstructionExpr {
         opcode instanceof Opcode::PointerSub or
         opcode instanceof Opcode::PointerDiff
       ) and
-      result = max(getPointerOperand().getResultType().(PointerType).getBaseType().getSize())
+      result = getElementSize(getPointerOperand().getExpr().getType())
     )
   }
 
@@ -1282,13 +1236,10 @@ class TranslatedAssignExpr extends TranslatedAssignment {
     result = getInstruction(AssignmentStoreTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = AssignmentStoreTag() and
     opcode instanceof Opcode::Store and
-    resultType = getResultType() and
-    isGLValue = false
+    resultType = getIRTypeForPRValue(expr.getType())  // Always a prvalue
   }
 
   override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -1365,14 +1316,15 @@ class TranslatedAssignOperation extends TranslatedAssignment {
       // anyway. If we really want to model this case perfectly, we'll need the
       // extractor to tell us what the promoted type of the left operand would
       // be.
-      result = getLeftOperand().getResultType()
+      result = getLeftOperand().getExpr().getType()
     else
       // The right operand has already been converted to the type of the op.
-      result = getRightOperand().getResultType()
+      result = getRightOperand().getExpr().getType()
   }
 
   private predicate leftOperandNeedsConversion() {
-    getConvertedLeftOperandType() != getLeftOperand().getResultType()
+    getConvertedLeftOperandType().getUnspecifiedType() !=
+      getLeftOperand().getExpr().getUnspecifiedType()
   }
 
   private Opcode getOpcode() {
@@ -1401,32 +1353,27 @@ class TranslatedAssignOperation extends TranslatedAssignment {
     expr instanceof AssignPointerSubExpr and result instanceof Opcode::PointerSub
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
-    isGLValue = false and
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
+    tag = AssignOperationLoadTag() and
+    opcode instanceof Opcode::Load and
+    resultType = getIRTypeForPRValue(getLeftOperand().getExpr().getType())
+    or
+    tag = AssignOperationOpTag() and
+    opcode = getOpcode() and
+    resultType = getIRTypeForPRValue(getConvertedLeftOperandType())
+    or
+    tag = AssignmentStoreTag() and
+    opcode instanceof Opcode::Store and
+    resultType = getIRTypeForPRValue(expr.getType())  // Always a prvalue
+    or
+    leftOperandNeedsConversion() and
+    opcode instanceof Opcode::Convert and
     (
-      tag = AssignOperationLoadTag() and
-      opcode instanceof Opcode::Load and
-      resultType = getLeftOperand().getResultType()
+      tag = AssignOperationConvertLeftTag() and
+      resultType = getIRTypeForPRValue(getConvertedLeftOperandType())
       or
-      tag = AssignOperationOpTag() and
-      opcode = getOpcode() and
-      resultType = getConvertedLeftOperandType()
-      or
-      tag = AssignmentStoreTag() and
-      opcode instanceof Opcode::Store and
-      resultType = getResultType()
-      or
-      leftOperandNeedsConversion() and
-      opcode instanceof Opcode::Convert and
-      (
-        tag = AssignOperationConvertLeftTag() and
-        resultType = getConvertedLeftOperandType()
-        or
-        tag = AssignOperationConvertResultTag() and
-        resultType = getLeftOperand().getResultType()
-      )
+      tag = AssignOperationConvertResultTag() and
+      resultType = getIRTypeForPRValue(getLeftOperand().getExpr().getType())
     )
   }
 
@@ -1436,7 +1383,7 @@ class TranslatedAssignOperation extends TranslatedAssignment {
       opcode = getOpcode() and
       (opcode instanceof Opcode::PointerAdd or opcode instanceof Opcode::PointerSub)
     ) and
-    result = max(getResultType().(PointerType).getBaseType().getSize())
+    result = getElementSize(expr.getType())
   }
 
   override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -1518,13 +1465,10 @@ class TranslatedConstantAllocationSize extends TranslatedAllocationSize {
 
   final override Instruction getFirstInstruction() { result = getInstruction(AllocationSizeTag()) }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = AllocationSizeTag() and
     opcode instanceof Opcode::Constant and
-    resultType = expr.getAllocator().getParameter(0).getUnspecifiedType() and
-    isGLValue = false
+    resultType = getIRTypeForPRValue(expr.getAllocator().getParameter(0).getType())
   }
 
   final override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -1557,11 +1501,8 @@ class TranslatedNonConstantAllocationSize extends TranslatedAllocationSize {
 
   final override Instruction getFirstInstruction() { result = getExtent().getFirstInstruction() }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
-    isGLValue = false and
-    resultType = expr.getAllocator().getParameter(0).getUnspecifiedType() and
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
+    resultType = getIRTypeForPRValue(expr.getAllocator().getParameter(0).getType()) and
     (
       // Convert the extent to `size_t`, because the AST doesn't do this already.
       tag = AllocationExtentConvertTag() and opcode instanceof Opcode::Convert
@@ -1633,7 +1574,9 @@ class TranslatedAllocatorCall extends TTranslatedAllocatorCall, TranslatedDirect
     tag = CallTargetTag() and result = expr.getAllocator()
   }
 
-  final override Type getCallResultType() { result = expr.getAllocator().getUnspecifiedType() }
+  final override Type getCallResultType() {
+    result = expr.getAllocator().getType()
+  }
 
   final override TranslatedExpr getQualifier() { none() }
 
@@ -1684,13 +1627,10 @@ class TranslatedDestructorFieldDestruction extends TranslatedNonConstantExpr, St
 
   final override TranslatedElement getChild(int id) { id = 0 and result = getDestructorCall() }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::FieldAddress and
-    resultType = expr.getTarget().getUnspecifiedType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getTarget().getType())
   }
 
   final override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -1737,9 +1677,7 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
 
   override Instruction getFirstInstruction() { result = getCondition().getFirstInstruction() }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     not resultIsVoid() and
     (
       (
@@ -1750,8 +1688,7 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
         tag = ConditionValueResultTempAddressTag()
       ) and
       opcode instanceof Opcode::VariableAddress and
-      resultType = getResultType() and
-      isGLValue = true
+      resultType = getIRTypeForGLValue(expr.getType())
       or
       (
         not thenIsVoid() and tag = ConditionValueTrueStoreTag()
@@ -1759,13 +1696,11 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
         not elseIsVoid() and tag = ConditionValueFalseStoreTag()
       ) and
       opcode instanceof Opcode::Store and
-      resultType = getResultType() and
-      isGLValue = false
+      resultType = getIRTypeForPRValue(expr.getType())
       or
       tag = ConditionValueResultLoadTag() and
       opcode instanceof Opcode::Load and
-      resultType = getResultType() and
-      isGLValue = isResultGLValue()
+      resultType = getResultIRType()
     )
   }
 
@@ -1836,7 +1771,7 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
   override predicate hasTempVariable(TempVariableTag tag, Type type) {
     not resultIsVoid() and
     tag = ConditionValueTempVar() and
-    type = getResultType()
+    type = expr.getType()
   }
 
   override IRVariable getInstructionVariable(InstructionTag tag) {
@@ -1893,7 +1828,7 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
   }
 
   private predicate thenIsVoid() {
-    getThen().getResultType() instanceof VoidType
+    getThen().getResultIRType() instanceof IRVoidType
     or
     // A `ThrowExpr.getType()` incorrectly returns the type of exception being
     // thrown, rather than `void`. Handle that case here.
@@ -1901,14 +1836,14 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
   }
 
   private predicate elseIsVoid() {
-    getElse().getResultType() instanceof VoidType
+    getElse().getResultIRType() instanceof IRVoidType
     or
     // A `ThrowExpr.getType()` incorrectly returns the type of exception being
     // thrown, rather than `void`. Handle that case here.
     expr.getElse() instanceof ThrowExpr
   }
 
-  private predicate resultIsVoid() { getResultType() instanceof VoidType }
+  private predicate resultIsVoid() { getResultIRType() instanceof IRVoidType }
 }
 
 /**
@@ -1917,13 +1852,10 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
 abstract class TranslatedThrowExpr extends TranslatedNonConstantExpr {
   override ThrowExpr expr;
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = ThrowTag() and
     opcode = getThrowOpcode() and
-    resultType instanceof VoidType and
-    isGLValue = false
+    resultType = getVoidType()
   }
 
   override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -1950,15 +1882,12 @@ class TranslatedThrowValueExpr extends TranslatedThrowExpr, InitializationContex
     result = getInstruction(InitializerVariableAddressTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
-    TranslatedThrowExpr.super.hasInstruction(opcode, tag, resultType, isGLValue)
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
+    TranslatedThrowExpr.super.hasInstruction(opcode, tag, resultType)
     or
     tag = InitializerVariableAddressTag() and
     opcode instanceof Opcode::VariableAddress and
-    resultType = getExceptionType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(getExceptionType())
   }
 
   override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -2013,7 +1942,7 @@ class TranslatedThrowValueExpr extends TranslatedThrowExpr, InitializationContex
 
   final override Opcode getThrowOpcode() { result instanceof Opcode::ThrowValue }
 
-  private Type getExceptionType() { result = expr.getUnspecifiedType() }
+  private Type getExceptionType() { result = expr.getType() }
 }
 
 /**
@@ -2071,13 +2000,10 @@ class TranslatedBuiltInOperation extends TranslatedNonConstantExpr {
     )
   }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode = getOpcode() and
-    resultType = getResultType() and
-    isGLValue = isResultGLValue()
+    resultType = getResultIRType()
   }
 
   final override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -2144,13 +2070,10 @@ abstract class TranslatedNewOrNewArrayExpr extends TranslatedNonConstantExpr, In
     id = 1 and result = getInitialization()
   }
 
-  final override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  final override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = OnlyInstructionTag() and
     opcode instanceof Opcode::Convert and
-    resultType = getResultType() and
-    isGLValue = false
+    resultType = getResultIRType()
   }
 
   final override Instruction getFirstInstruction() {
@@ -2311,9 +2234,7 @@ class TranslatedConditionDeclExpr extends TranslatedNonConstantExpr {
     child = getConditionExpr() and result = getParent().getChildSuccessor(this)
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     none()
   }
 
@@ -2362,23 +2283,18 @@ class TranslatedLambdaExpr extends TranslatedNonConstantExpr, InitializationCont
     result = getInstruction(LoadTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     tag = InitializerVariableAddressTag() and
     opcode instanceof Opcode::VariableAddress and
-    resultType = getResultType() and
-    isGLValue = true
+    resultType = getIRTypeForGLValue(expr.getType())
     or
     tag = InitializerStoreTag() and
     opcode instanceof Opcode::Uninitialized and
-    resultType = getResultType() and
-    isGLValue = false
+    resultType = getIRTypeForPRValue(expr.getType())
     or
     tag = LoadTag() and
     opcode instanceof Opcode::Load and
-    resultType = getResultType() and
-    isGLValue = false
+    resultType = getIRTypeForPRValue(expr.getType())
   }
 
   override Instruction getInstructionOperand(InstructionTag tag, OperandTag operandTag) {
@@ -2406,14 +2322,14 @@ class TranslatedLambdaExpr extends TranslatedNonConstantExpr, InitializationCont
 
   override predicate hasTempVariable(TempVariableTag tag, Type type) {
     tag = LambdaTempVar() and
-    type = getResultType()
+    type = expr.getType()
   }
 
   final override Instruction getTargetAddress() {
     result = getInstruction(InitializerVariableAddressTag())
   }
 
-  final override Type getTargetType() { result = getResultType() }
+  final override Type getTargetType() { result = expr.getType() }
 
   private predicate hasInitializer() { exists(getInitialization()) }
 
@@ -2444,13 +2360,10 @@ class TranslatedStmtExpr extends TranslatedNonConstantExpr {
     result = getInstruction(OnlyInstructionTag())
   }
 
-  override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
-  ) {
+  override predicate hasInstruction(Opcode opcode, InstructionTag tag, IRType resultType) {
     opcode instanceof Opcode::CopyValue and
     tag instanceof OnlyInstructionTag and
-    resultType = expr.getType() and
-    isGLValue = false
+    resultType = getResultIRType()
   }
 
   override Instruction getResult() { result = getInstruction(OnlyInstructionTag()) }

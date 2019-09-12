@@ -350,15 +350,7 @@ class Instruction extends Construction::TInstruction {
   }
 
   string getResultTypeString() {
-    exists(string valcat |
-      valcat = getValueCategoryString(getResultType().toString()) and
-      if
-        getResultType() instanceof Language::UnknownType and
-        not isGLValue() and
-        exists(getResultSize())
-      then result = valcat + "[" + getResultSize().toString() + "]"
-      else result = valcat
-    )
+    result = Construction::getInstructionResultType(this).toString()
   }
 
   /**
@@ -448,6 +440,10 @@ class Instruction extends Construction::TInstruction {
     result = Construction::getInstructionUnconvertedResultExpression(this)
   }
 
+  final Language::IRType getResultIRType() {
+    result = Construction::getInstructionResultType(this)
+  }
+
   /**
    * Gets the type of the result produced by this instruction. If the
    * instruction does not produce a result, its result type will be `VoidType`.
@@ -455,7 +451,16 @@ class Instruction extends Construction::TInstruction {
    * If `isGLValue()` holds, then the result type of this instruction should be
    * thought of as "pointer to `getResultType()`".
    */
-  final Language::Type getResultType() { Construction::instructionHasType(this, result, _) }
+  final Language::Type getResultType() {
+    exists(Language::IRType resultType, Language::Type langType |
+      resultType = getResultIRType() and
+      (
+        resultType.hasType(langType, _) or
+        not resultType.hasType(_, _) and result instanceof Language::UnknownType
+      ) and
+      result = langType.getUnspecifiedType()
+    )
+  }
 
   /**
    * Holds if the result produced by this instruction is a glvalue. If this
@@ -475,7 +480,9 @@ class Instruction extends Construction::TInstruction {
    * result of the `Load` instruction is a prvalue of type `int`, representing
    * the integer value loaded from variable `x`.
    */
-  final predicate isGLValue() { Construction::instructionHasType(this, _, true) }
+  final predicate isGLValue() {
+    Construction::getInstructionResultType(this).hasType(_, true)
+  }
 
   /**
    * Gets the size of the result produced by this instruction, in bytes. If the
@@ -485,14 +492,7 @@ class Instruction extends Construction::TInstruction {
    * `getResultSize()` will always be the size of a pointer.
    */
   final int getResultSize() {
-    if isGLValue()
-    then
-      // a glvalue is always pointer-sized.
-      result = Language::getPointerSize()
-    else
-      if getResultType() instanceof Language::UnknownType
-      then result = Construction::getInstructionResultSize(this)
-      else result = Language::getTypeSize(getResultType())
+    result = Construction::getInstructionResultType(this).getByteSize()
   }
 
   /**

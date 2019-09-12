@@ -1,6 +1,7 @@
 private import cpp
 private import semmle.code.cpp.ir.implementation.Opcode
 private import semmle.code.cpp.ir.implementation.internal.OperandTag
+private import semmle.code.cpp.ir.internal.IRType
 private import semmle.code.cpp.models.interfaces.SideEffect
 private import InstructionTag
 private import TranslatedElement
@@ -31,12 +32,11 @@ abstract class TranslatedCall extends TranslatedExpr {
   }
 
   override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
+    Opcode opcode, InstructionTag tag, IRType resultType
   ) {
     tag = CallTag() and
     opcode instanceof Opcode::Call and
-    resultType = getCallResultType() and
-    isGLValue = false
+    resultType = getIRTypeForPRValue(getCallResultType())
     or
     hasSideEffect() and
     tag = CallSideEffectTag() and
@@ -44,13 +44,12 @@ abstract class TranslatedCall extends TranslatedExpr {
       if hasWriteSideEffect()
       then (
         opcode instanceof Opcode::CallSideEffect and
-        resultType instanceof UnknownType
+        resultType = getUnknownType()
       ) else (
         opcode instanceof Opcode::CallReadSideEffect and
-        resultType instanceof VoidType
+        resultType = getVoidType()
       )
-    ) and
-    isGLValue = false
+    )
   }
 
   override Instruction getChildSuccessor(TranslatedElement child) {
@@ -206,17 +205,13 @@ abstract class TranslatedDirectCall extends TranslatedCall {
   final override Instruction getCallTargetResult() { result = getInstruction(CallTargetTag()) }
 
   override predicate hasInstruction(
-    Opcode opcode, InstructionTag tag, Type resultType, boolean isGLValue
+    Opcode opcode, InstructionTag tag, IRType resultType
   ) {
-    TranslatedCall.super.hasInstruction(opcode, tag, resultType, isGLValue)
+    TranslatedCall.super.hasInstruction(opcode, tag, resultType)
     or
     tag = CallTargetTag() and
     opcode instanceof Opcode::FunctionAddress and
-    // The database does not contain a `FunctionType` for a function unless
-    // its address was taken, so we'll just use glval<Unknown> instead of
-    // glval<FunctionType>.
-    resultType instanceof UnknownType and
-    isGLValue = true
+    resultType = getFunctionGLValueType()
   }
 
   override Instruction getInstructionSuccessor(InstructionTag tag, EdgeKind kind) {
@@ -234,7 +229,7 @@ abstract class TranslatedDirectCall extends TranslatedCall {
 abstract class TranslatedCallExpr extends TranslatedNonConstantExpr, TranslatedCall {
   override Call expr;
 
-  final override Type getCallResultType() { result = getResultType() }
+  final override Type getCallResultType() { result = expr.getType() }
 
   final override predicate hasArguments() { exists(expr.getArgument(0)) }
 

@@ -1,6 +1,7 @@
 private import cpp as Cpp
 private import semmle.code.cpp.Print as Print
 private import IRUtilities
+import IRType
 
 class Function = Cpp::Function;
 
