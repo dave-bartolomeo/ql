@@ -1771,7 +1771,7 @@ class TranslatedConditionalExpr extends TranslatedNonConstantExpr, ConditionCont
   override predicate hasTempVariable(TempVariableTag tag, Type type) {
     not resultIsVoid() and
     tag = ConditionValueTempVar() and
-    type = expr.getType()
+    type = expr.getType().getUnspecifiedType()
   }
 
   override IRVariable getInstructionVariable(InstructionTag tag) {
